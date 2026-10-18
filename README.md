@@ -44,17 +44,18 @@ Create separate manifests for single-view, held-out-angle, angle-gap and one/thr
 
 ## Registered compact reproduction setting
 
-Eight-rank conditioning network, 16 phase by 65 signed-velocity bins and 30 epochs. Input can be exported point clouds or a directly registered phase-energy measure; a vendor-specific RAW decoder is not required.
+Shared moving scatterers are projected onto each radar line of sight, producing signed velocity/intensity/phase points. Training uses three aspects; independent test subjects retain all seven aspects and a simulated zero-angle counterpart. The existing point-to-measure preprocessor remains active.
 
-Run from the repository root after installation. The following commands use the registered setting; they are provided for execution and have not been run as part of the source review.
+Generate the declared input process, preprocess it, then use the existing method entry points:
 
 ```bash
-mdot-radar prepare --config configs/reproduce.json --input data/manifest.json --data data/reproduce
+python -m mdot_radar.synthetic --output data/generated --subjects 18 --seed 17
+mdot-radar prepare --config configs/reproduce.json --input data/generated/manifest.json --data data/reproduce
 mdot-radar train --config configs/reproduce.json --data data/reproduce --output runs/reproduce
 mdot-radar evaluate --config configs/reproduce.json --data data/reproduce --checkpoint runs/reproduce/model.pt --output runs/reproduce
 ```
 
-Required external inputs: subject/pair-disjoint multi-angle radar points or phase-energy measures; canonical pairs for W1. The formal input fields are specified above; preparation/training interfaces consume those fields directly. No particular paper dataset or pretrained task model is assumed beyond these declared inputs.
+`source.json` records the data-generating assumptions and seed. The configuration records `input_source`. All inputs for this selected setting are generated locally using installed package dependencies.
 
 ## Multiple seeds
 
