@@ -1,0 +1,17 @@
+{
+  "seed": 17,
+  "epochs": 30,
+  "batch_size": 8,
+  "lr": 0.001,
+  "phase_bins": 16,
+  "velocity_bins": 65,
+  "vmax": 4.0,
+  "bandwidth": 0.12,
+  "clutter_threshold": 0.03,
+  "knots": 8,
+  "rank": 8,
+  "alignment_weight": 1.0,
+  "composition_weight": 0.1,
+  "smoothness_weight": 0.01,
+  "device": "cpu"
+}
