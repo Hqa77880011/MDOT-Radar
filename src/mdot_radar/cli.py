@@ -49,7 +49,7 @@ def prepare(a, c):
             raise ValueError("Measure shape differs from configured bins")
         target = output / f"measure_{i:06d}.npz"
         np.savez_compressed(target, measure=array)
-        result.append(dict(r, path=str(target.resolve())))
+        result.append(dict(r, path=str(target.resolve()), source_path=str(path.resolve()), raw_points='points' in raw))
     save(output / "manifest.json", result)
     save(output / "preprocessing.json", c)
 
@@ -79,9 +79,9 @@ def train(a, c):
     records = [r for r in load(Path(a.data) / "manifest.json") if r["split"] == "train"]
     classes = max(r["label"] for r in records) + 1
     transport = Transport(c).to(c["device"])
-    classifier = Classifier(classes).to(c["device"])
+    classifier = Classifier(classes, c.get("classifier_width", 64)).to(c["device"])
     domain_angles = sorted({r["angle"] for r in records})
-    discriminator = nn.Linear(256, len(domain_angles)).to(c["device"])
+    discriminator = nn.Linear(classifier.feature_dim, len(domain_angles)).to(c["device"])
     opt = torch.optim.Adam(
         list(transport.parameters()) + list(classifier.parameters())
         + (list(discriminator.parameters()) if a.variant == "dann" else []),
@@ -186,7 +186,7 @@ def evaluate(a, c):
     c = state["config"]
     variant = state["variant"]
     transport = Transport(c).to(c["device"])
-    classifier = Classifier(state["classes"]).to(c["device"])
+    classifier = Classifier(state["classes"], c.get("classifier_width", 64)).to(c["device"])
     transport.load_state_dict(state["transport"])
     classifier.load_state_dict(state["classifier"])
     transport.eval()
@@ -195,15 +195,23 @@ def evaluate(a, c):
     rows = []
     with torch.no_grad():
         for selected, pp, angles, labels in batches(records, c):
+            raw_points=[np.load(r['source_path'])['points'] for r in selected] if all(r.get('raw_points') for r in selected) else None
             if str(c["device"]).startswith("cuda"):
                 torch.cuda.synchronize()
             start = time.perf_counter()
+            if raw_points is not None:
+                pp=torch.tensor(np.stack([measure(points,c) for points in raw_points]),device=c['device'])
+            if str(c['device']).startswith('cuda'):
+                torch.cuda.synchronize()
+            model_start=time.perf_counter()
             used = angles + a.wrong_angle
             canonical, t13 = transport(pp, used, torch.zeros_like(used), variant)
             logits = classifier(canonical, used, variant == "angle_token")
             if str(c["device"]).startswith("cuda"):
                 torch.cuda.synchronize()
-            latency = (time.perf_counter() - start) * 1000 / len(selected)
+            end=time.perf_counter()
+            latency=(end-model_start)*1000/len(selected)
+            pipeline_latency=(end-start)*1000/len(selected) if raw_points is not None else None
             middle = used / 2
             t12, _ = transport.mapping(used, middle, variant)
             t23, _ = transport.mapping(middle, torch.zeros_like(used), variant)
@@ -242,6 +250,7 @@ def evaluate(a, c):
                         composition_error=float(composition[i]),
                         mass_error=float(mass[i]),
                         latency_ms=latency,
+                        pipeline_latency_ms=pipeline_latency,
                     )
                 )
     summary = dict(
@@ -258,6 +267,7 @@ def evaluate(a, c):
         composition_error=np.mean([r["composition_error"] for r in rows]),
         mass_error=np.mean([r["mass_error"] for r in rows]),
         model_latency_ms=np.mean([r["latency_ms"] for r in rows]),
+        pipeline_latency_ms=np.mean([r['pipeline_latency_ms'] for r in rows if r['pipeline_latency_ms'] is not None]) if any(r['pipeline_latency_ms'] is not None for r in rows) else None,
         w1=np.mean([r["w1"] for r in rows if r["w1"] is not None])
         if any(r["w1"] is not None for r in rows)
         else None,

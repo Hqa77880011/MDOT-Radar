@@ -14,5 +14,6 @@
   "composition_weight": 0.1,
   "smoothness_weight": 0.01,
   "device": "cpu",
-  "input_source": "paired_radial_scatterer_returns"
+  "input_source": "paired_radial_scatterer_returns",
+  "classifier_width": 64
 }

@@ -104,18 +104,41 @@ class Transport(nn.Module):
         return result, mapping
 
 
-class Classifier(nn.Module):
-    def __init__(self, classes):
+class ResidualBlock(nn.Module):
+    """Two-convolution ResNet basic block for phase-velocity images."""
+
+    def __init__(self, inputs, outputs, stride=1):
         super().__init__()
-        self.body = nn.Sequential(
-            nn.Conv2d(1, 16, 3, padding=1),
-            nn.GELU(),
-            nn.Conv2d(16, 32, 3, padding=1),
-            nn.GELU(),
-            nn.AdaptiveAvgPool2d((2, 4)),
-            nn.Flatten(),
+        self.residual = nn.Sequential(
+            nn.Conv2d(inputs, outputs, 3, stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(outputs), nn.ReLU(),
+            nn.Conv2d(outputs, outputs, 3, padding=1, bias=False),
+            nn.BatchNorm2d(outputs),
         )
-        self.head = nn.Linear(260, classes)
+        self.skip = nn.Identity() if inputs == outputs and stride == 1 else nn.Sequential(
+            nn.Conv2d(inputs, outputs, 1, stride=stride, bias=False), nn.BatchNorm2d(outputs)
+        )
+
+    def forward(self, x):
+        return F.relu(self.residual(x) + self.skip(x))
+
+
+class Classifier(nn.Module):
+    """ResNet-18 (2/2/2/2 blocks), one-channel spectrogram stem."""
+
+    def __init__(self, classes, width=64):
+        super().__init__()
+        layers = [nn.Conv2d(1, width, 3, padding=1, bias=False), nn.BatchNorm2d(width), nn.ReLU()]
+        channels = width
+        for stage in range(4):
+            outputs = width * 2 ** stage
+            layers += [ResidualBlock(channels, outputs, 1 if stage == 0 else 2),
+                       ResidualBlock(outputs, outputs)]
+            channels = outputs
+        layers += [nn.AdaptiveAvgPool2d(1), nn.Flatten()]
+        self.body = nn.Sequential(*layers)
+        self.feature_dim = channels
+        self.head = nn.Linear(channels + 4, classes)
 
     def features(self, x):
         return self.body(x[:, None])
@@ -123,19 +146,8 @@ class Classifier(nn.Module):
     def forward(self, x, angles, token=False):
         f = self.features(x)
         radians = angles * torch.pi / 180
-        metadata = (
-            torch.stack(
-                [
-                    radians.sin(),
-                    radians.cos(),
-                    (2 * radians).sin(),
-                    (2 * radians).cos(),
-                ],
-                dim=1,
-            )
-            if token
-            else torch.zeros(len(x), 4, device=x.device)
-        )
+        metadata = torch.stack([radians.sin(), radians.cos(), (2*radians).sin(),
+                                (2*radians).cos()], dim=1) if token else x.new_zeros(len(x), 4)
         return self.head(torch.cat([f, metadata], dim=1))
 
 

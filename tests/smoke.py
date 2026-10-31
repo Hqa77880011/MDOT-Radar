@@ -18,7 +18,7 @@ def main():
     torch.manual_seed(17)
     c = dict(seed=17, epochs=1, batch_size=4, lr=0.001, phase_bins=4,
              velocity_bins=17, vmax=4., bandwidth=.2, clutter_threshold=.03,
-             knots=3, rank=4, alignment_weight=1., composition_weight=.1,
+             knots=3, rank=4, classifier_width=4, alignment_weight=1., composition_weight=.1,
              smoothness_weight=.01, device="cpu")
     model = Transport(c)
     x = torch.rand(4, 4, 17)
@@ -34,6 +34,13 @@ def main():
     assert torch.isfinite(loss) and model.net[0].weight.grad.abs().sum() > 0
     torch.optim.SGD(model.parameters(), lr=.01).step()
     assert not torch.equal(before, model.net[0].weight)
+    backbone=Classifier(2,width=4).eval()
+    before=backbone.body[0].weight.detach().clone()
+    classification_loss=torch.nn.functional.cross_entropy(backbone(x,angles),torch.tensor([0,1,0,1]))
+    classification_loss.backward()
+    assert backbone.body[0].weight.grad.abs().sum()>0
+    torch.optim.SGD(backbone.parameters(),lr=.01).step()
+    assert not torch.equal(before,backbone.body[0].weight)
     v = torch.tensor([1.], requires_grad=True)
     ReverseGradient.apply(v).sum().backward()
     assert v.grad.item() == -1
@@ -70,6 +77,9 @@ def main():
             second.load_state_dict(state["transport"])
             torch.testing.assert_close(first(x, angles, angles * 0, variant)[0],
                                        second(x, angles, angles * 0, variant)[0])
+            head1,head2=Classifier(2,width=4).eval(),Classifier(2,width=4).eval()
+            head1.load_state_dict(state['classifier']);head2.load_state_dict(state['classifier'])
+            torch.testing.assert_close(head1(x,angles),head2(x,angles),atol=1e-7,rtol=1e-6)
             evaluate(a, c)
             metrics = json.loads((Path(a.output) / "metrics.json").read_text())
             assert np.isfinite(metrics["accuracy"]) and metrics["mass_error"] is not None
