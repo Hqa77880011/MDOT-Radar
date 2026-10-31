@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch import nn
-from .model import Transport, Classifier, interpolate, wasserstein
+from .model import Transport, Classifier, ReverseGradient, interpolate, wasserstein
 from .common import load, save, table, plot
 
 
@@ -80,8 +80,12 @@ def train(a, c):
     classes = max(r["label"] for r in records) + 1
     transport = Transport(c).to(c["device"])
     classifier = Classifier(classes).to(c["device"])
+    domain_angles = sorted({r["angle"] for r in records})
+    discriminator = nn.Linear(256, len(domain_angles)).to(c["device"])
     opt = torch.optim.Adam(
-        list(transport.parameters()) + list(classifier.parameters()), lr=c["lr"]
+        list(transport.parameters()) + list(classifier.parameters())
+        + (list(discriminator.parameters()) if a.variant == "dann" else []),
+        lr=c["lr"],
     )
     history = []
     for epoch in range(c["epochs"]):
@@ -101,6 +105,8 @@ def train(a, c):
                     for q in records
                     if q["pair"] == r["pair"] and q["angle"] != r["angle"]
                 ]
+                if not partners and len(domain_angles) == 1:
+                    partners = [r]
                 if not partners:
                     raise ValueError(
                         "Each training item needs another angle with the same pair ID"
@@ -113,7 +119,15 @@ def train(a, c):
             target_angle = torch.tensor(
                 [q["angle"] for q in pairs], device=c["device"], dtype=torch.float32
             )
-            if a.variant == "coral":
+            if a.variant == "dann":
+                domains = torch.tensor(
+                    [domain_angles.index(r["angle"]) for r in selected],
+                    device=c["device"],
+                )
+                loss = loss + c["alignment_weight"] * nn.functional.cross_entropy(
+                    discriminator(ReverseGradient.apply(classifier.features(pp))), domains
+                )
+            elif a.variant == "coral":
                 f = classifier.features(pp)
                 g = classifier.features(target)
                 centered = lambda x: x - x.mean(0, keepdim=True)
@@ -232,14 +246,18 @@ def evaluate(a, c):
                 )
     summary = dict(
         method=variant,
-        accuracy=np.mean([r["correct"] for r in rows]),
+        accuracy=np.mean([
+            np.mean([r["correct"] for r in rows if r["angle"] == angle])
+            for angle in {r["angle"] for r in rows}
+        ]),
+        sample_accuracy=np.mean([r["correct"] for r in rows]),
         worst_angle_accuracy=min(
             np.mean([r["correct"] for r in rows if r["angle"] == angle])
             for angle in {r["angle"] for r in rows}
         ),
         composition_error=np.mean([r["composition_error"] for r in rows]),
         mass_error=np.mean([r["mass_error"] for r in rows]),
-        latency_ms=np.mean([r["latency_ms"] for r in rows]),
+        model_latency_ms=np.mean([r["latency_ms"] for r in rows]),
         w1=np.mean([r["w1"] for r in rows if r["w1"] is not None])
         if any(r["w1"] is not None for r in rows)
         else None,
@@ -268,6 +286,7 @@ def main():
             "angle_token",
             "cosine",
             "coral",
+            "dann",
             "unconstrained",
             "no_anchor",
             "no_composition",

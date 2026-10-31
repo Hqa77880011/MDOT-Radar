@@ -50,6 +50,23 @@ mdot-radar plot --output outputs/comparison
 
 The selected commands write their generated inputs under `data/generated/`, prepared data under `data/reproduce/`, and checkpoints/results in the explicit output directories. Corresponding steps produce `model.pt`, `history.csv`, `samples.csv`, `metrics.json`, `source.json`. Comparisons write CSV/JSON and plots under their output directory.
 
+## Method and metric entry points
+
+| Paper component | Implementation / command |
+|---|---|
+| Phase KDE, clutter filtering, subject isolation | `cli.measure`, `prepare` |
+| Positive-increment zero-anchored spline and conservative push-forward | `model.Transport` |
+| W1, composition and curvature losses + classification | `train --variant mdot` |
+| Identity CNN, angle token, cosine scaling, CORAL, DANN | `train --variant identity/angle_token/cosine/coral/dann` (choose one) |
+| Broken constraints | `unconstrained`, `no_anchor`, `no_composition`, `nonconserving` |
+| Aspect-macro accuracy, worst angle, W1, mass/path error | `evaluate`; `sample_accuracy` is also retained |
+| Wrong metadata | `evaluate --wrong-angle 30` |
+| Figures / independent seeds | `compare`, `plot`, `mdot-radar-report --inputs ... --output ...` |
+
+Each `--variant` needs its own training checkpoint. DANN uses a gradient-reversal angle-domain head over the same 256-dimensional CNN features; the domain head is only used during training. All learned transport variants have the same spline parameter count. A single-view training manifest uses self-alignment (there are no measured cross-angle pairs); other protocols require paired returns at different angles. Create single/few-view protocols by filtering only training-aspect records, retaining the subject split and the common test set.
+
+External Pantomime inputs must be converted under its research terms to the same manifest/NPZ format: `points` [N,3] = radial velocity (m/s), nonnegative intensity, normalized phase; manifest fields `id,path,subject,pair,angle,label,split`. Alternatively provide `measure` [phase_bins,velocity_bins] with the frozen preprocessing. The paper's original dataset conversion, experiment checkpoints and locked results are not bundled. The shared classifier here is a compact two-convolution CNN, not the paper's ResNet baseline; widths and numeric hyperparameters absent from the manuscript are explicit implementation choices in the JSON configurations. `model_latency_ms` excludes raw measure construction and disk I/O, and therefore is not the paper's complete-pipeline runtime. No paper performance is claimed by generated data.
+
 ## Verification
 
-Source checks used Python 3.13.5. Installed dependency metadata: numpy 2.1.3, torch 2.7.1+cu118, scipy 1.15.3, matplotlib 3.10.0. Python AST, configuration files, CLI parser definitions and source input/output paths were checked without invoking command handlers. Training, full evaluation and CI were not run for this review.
+Run `python tests/smoke.py` from the repository root. On 2026-11-01 this passed with Python 3.13.5, numpy 2.1.3, torch 2.7.1+cu118 (CPU, one thread), scipy 1.15.3 and matplotlib 3.10.0. It reads synthetic point-return NPZs, prepares disjoint subjects, trains and evaluates all ten variants for one epoch, checks finite losses and transport parameter gradients/updates, conservation, monotonicity, zero anchoring, checkpoint output equality and a hand-computed W1=2 case. Generated functional-check outputs stay in ignored `runs/functional-check/`. These checks validate code paths, not Pantomime performance; full training and real-data protocols were not run.

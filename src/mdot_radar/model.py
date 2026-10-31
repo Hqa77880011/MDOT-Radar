@@ -3,6 +3,16 @@ from torch import nn
 from torch.nn import functional as F
 
 
+class ReverseGradient(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, value):
+        return value.view_as(value)
+
+    @staticmethod
+    def backward(ctx, gradient):
+        return -gradient
+
+
 def interpolate(values, positions, grid):
     step = grid[1] - grid[0]
     location = ((positions - grid[0]) / step).clamp(0, len(grid) - 1)
