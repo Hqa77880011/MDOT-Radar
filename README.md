@@ -1,6 +1,6 @@
 # MDOT-Radar
 
-Implementation of constrained monotone Doppler-measure transport for cross-aspect gesture recognition.
+Constrained monotone Doppler-measure transport for cross-aspect gesture recognition.
 
 ## Installation
 
@@ -52,7 +52,7 @@ The selected commands write their generated inputs under `data/generated/`, prep
 
 ## Method and metric entry points
 
-| Paper component | Implementation / command |
+| Component | Implementation / command |
 |---|---|
 | Phase KDE, clutter filtering, subject isolation | `cli.measure`, `prepare` |
 | Positive-increment zero-anchored spline and conservative push-forward | `model.Transport` |
@@ -67,7 +67,7 @@ Each `--variant` needs its own training checkpoint. DANN uses a gradient-reversa
 
 ## Native Pantomime and aspect protocols
 
-The [Pantomime author data guide](https://dariush-salami.github.io/posts/pantomime-mid-air-gesture-recognition-with-sparse-millimeter-wave-radar-point-clouds/) describes per-trial pickle arrays of ragged frames containing xyz, optionally intensity. That public layout does **not** contain measured Doppler. The converter never silently calls xyz/intensity a velocity measurement. A radar export that retains measured Doppler can supply its zero-based `--velocity-column`; otherwise the explicit `--range-rate-proxy` computes nearest-point radial-distance differences. The proxy changes the measurement definition and cannot reproduce the paper's measured-Doppler experiment by itself.
+Obtain Pantomime through the [author data guide](https://dariush-salami.github.io/posts/pantomime-mid-air-gesture-recognition-with-sparse-millimeter-wave-radar-point-clouds/). Its public pickle layout contains ragged xyz frames with optional intensity. Use `--velocity-column` for an export containing measured Doppler, or `--range-rate-proxy` for nearest-point radial-distance differences. The two options retain distinct measurement definitions.
 
 Create a CSV with `file,id,subject,pair,angle,label,split`. Paths are relative to the CSV, speed units are m/s, angles degrees and labels zero based. `pair` must identify a truly paired acquisition, rather than inventing synchronization between independent gesture repetitions. Only trusted upstream pickle files may use `--trust-pickle`.
 
@@ -79,8 +79,13 @@ mdot-radar prepare --config configs/reproduce.json --input data/aspect_protocol.
 
 Use the actual recording FPS. Three-column xyz pickles require `--unit-intensity`; missing intensity is then explicitly uniform. For an extended raw export with measured Doppler in column 4, replace `--range-rate-proxy` by `--velocity-column 4`. The protocol assigns subject folds once before filtering training angles. One/three/seven-view protocols change only `--training-angles`; all test views and subjects remain fixed. Wrong-angle tests use the frozen checkpoint. Angle-gap panels can group `samples.csv` by recorded angle without retraining.
 
-All ten variants share an actual ResNet-18 classifier (2/2/2/2 basic residual blocks, default widths 64/128/256/512, a stride-one 3x3 single-channel stem for the short phase axis). `classifier_width` is configurable and set to four only by the tiny functional test. The manuscript does not fix its exact ResNet depth/stem, so these architecture values are explicit implementation choices. The constrained/unconstrained transports share parameter count. `pipeline_latency_ms` times KDE construction, input transfer, transport and classifier in the evaluation process; file decompression is excluded. It is available when raw point returns are retained by `prepare`; `model_latency_ms` separately times transport/classification for every input format.
+All ten variants share a ResNet-18 classifier with 2/2/2/2 residual blocks, widths 64/128/256/512 and a stride-one 3x3 single-channel stem. `classifier_width` controls width. Constrained and unconstrained transports have the same parameter count. `pipeline_latency_ms` includes KDE construction, input transfer, transport and classification when raw returns are retained by `prepare`; `model_latency_ms` covers transport/classification for all input formats. File decompression is excluded.
 
-## Verification
+## Checks
 
-Run `python tests/smoke.py` and `python tests/native_formats.py` from the repository root. On 2026-11-01 this passed with Python 3.13.5, numpy 2.1.3, torch 2.7.1+cu118 (CPU, one thread), scipy 1.15.3 and matplotlib 3.10.0. It reads synthetic point-return NPZs, prepares disjoint subjects, trains and evaluates all ten variants for one epoch, checks finite losses and transport parameter gradients/updates, conservation, monotonicity, zero anchoring, checkpoint output equality and a hand-computed W1=2 case. Generated functional-check outputs stay in ignored `runs/functional-check/`. The native-format check validates xyz/intensity rejection, an explicit known range-rate proxy, measured-velocity extraction and frozen one-view splits. These are functional fixtures; full Pantomime training was not run.
+Generated fixtures check data handling, metrics and checkpoint loading. On Windows with separate MKL/OpenMP runtimes, set `$env:MKL_THREADING_LAYER='SEQUENTIAL'` in the active PowerShell process.
+
+```bash
+python tests/smoke.py
+python tests/native_formats.py
+```
